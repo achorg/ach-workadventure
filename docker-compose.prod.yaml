@@ -1,0 +1,192 @@
+services:
+  coturn:
+    image: coturn/coturn:4.6.3
+    restart: always
+    command:
+      - turnserver
+      - --log-file=stdout
+      - --listening-port=3478
+      - --no-tls
+      - --no-dtls
+      - --listening-ip=0.0.0.0
+      - --external-ip=157.245.3.32
+      - --realm=workadventure.ach.org
+      - --server-name=workadventure.ach.org
+      - --fingerprint
+      - --no-cli
+      - --use-auth-secret
+      - --static-auth-secret=${TURN_STATIC_AUTH_SECRET}
+      - --min-port=49160
+      - --max-port=49200
+    network_mode: host
+
+  livekit:
+    image: livekit/livekit-server:v1.8.4
+    restart: always
+    command: --config /etc/livekit/config.yaml
+    ports:
+      - "7881:7881"
+      - "7882:7882/udp"
+      - "7880:7880"
+    volumes:
+      - ./livekit-config.yaml:/etc/livekit/config.yaml
+    depends_on:
+      redis:
+        condition: service_started
+
+  egress:
+    image: livekit/egress:v1.9.0
+    restart: always
+    environment:
+      EGRESS_CONFIG_FILE: /etc/egress/config.yaml
+      DISABLE_CUDA: "true"
+      DISABLE_NVENC: "true"
+      EGRESS_OUTPUT_DIR: "/out"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    volumes:
+      - ./egress-config.yaml:/etc/egress/config.yaml
+      - ./out:/out:rw
+      - /tmp:/tmp:rw
+    cap_add:
+      - SYS_ADMIN
+    privileged: true
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8081/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    depends_on:
+      redis:
+        condition: service_started
+      livekit:
+        condition: service_started
+
+  minio-livekit:
+    image: bitnamilegacy/minio:2025.4.22
+    restart: always
+    environment:
+      MINIO_ROOT_USER: "minio-access-key"
+      MINIO_ROOT_PASSWORD: "minio-secret-access-key"
+      MINIO_DEFAULT_BUCKETS: "livekit-recording:public"
+      MINIO_SITE_REGION: "eu-west-1"
+
+  reverse-proxy:
+    image: traefik:v3.6.1
+    restart: always
+    command:
+      - --api.insecure=false
+      - --providers.docker
+      - --providers.docker.exposedbydefault=false
+      - --entrypoints.web.address=:80
+      - --entrypoints.web.transport.respondingTimeouts.readTimeout=0
+      - --entrypoints.web.transport.respondingTimeouts.idleTimeout=3600s
+      - --entrypoints.websecure.address=:443
+      - --entrypoints.websecure.transport.respondingTimeouts.readTimeout=0
+      - --entrypoints.websecure.transport.respondingTimeouts.idleTimeout=3600s
+      - --certificatesresolvers.letsencrypt.acme.tlschallenge=true
+      - --certificatesresolvers.letsencrypt.acme.email=apjanco@gmail.com
+      - --certificatesresolvers.letsencrypt.acme.storage=/letsencrypt/acme.json
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - ./letsencrypt:/letsencrypt
+    networks:
+      default:
+        aliases:
+          - "play.apjan.co"
+          - "maps.apjan.co"
+
+  play:
+    image: thecodingmachine/workadventure-play:${VERSION:-master}
+    command: npm run start
+    working_dir: /usr/src/play
+    volumes: !reset []
+    ports: !reset []
+    tmpfs: !reset []
+    environment:
+      - PUSHER_URL=https://workadventure.ach.org
+      - FRONT_URL=https://workadventure.ach.org
+      - VITE_URL=https://workadventure.ach.org
+      - MAX_PER_GROUP=4
+      - STUN_SERVER=${STUN_SERVER:-stun:stun.l.google.com:19302}
+      - TURN_SERVER=${TURN_SERVER:-turn:157.245.3.32:3478?transport=udp,turn:157.245.3.32:3478?transport=tcp}
+      - TURN_STATIC_AUTH_SECRET=${TURN_STATIC_AUTH_SECRET:-}
+      - TURN_USER=${TURN_USER:-}
+      - TURN_PASSWORD=${TURN_PASSWORD:-}
+      - ALLOWED_CORS_ORIGIN=*
+      - PUBLIC_MAP_STORAGE_URL=https://maps.apjan.co
+      - NODE_ENV=production
+      - MAX_DISPLAYED_VIDEOS=2
+    restart: always
+    labels: !override
+      - "traefik.enable=true"
+      - "traefik.http.middlewares.https-redirect.redirectscheme.scheme=https"
+      - "traefik.http.middlewares.https-redirect.redirectscheme.permanent=true"
+      - "traefik.http.routers.play-http.rule=Host(`play.apjan.co`) || Host(`workadventure.ach.org`)"
+      - "traefik.http.routers.play-http.entrypoints=web"
+      - "traefik.http.routers.play-http.middlewares=https-redirect"
+      - "traefik.http.routers.play-http.service=play"
+      - "traefik.http.routers.play.rule=Host(`play.apjan.co`) || Host(`workadventure.ach.org`)"
+      - "traefik.http.routers.play.entrypoints=websecure"
+      - "traefik.http.routers.play.tls.certresolver=letsencrypt"
+      - "traefik.http.routers.play.service=play"
+      - "traefik.http.services.play.loadbalancer.server.port=3000"
+      - "traefik.http.routers.play-ws-ssl.rule=(Host(`play.apjan.co`) || Host(`workadventure.ach.org`)) && PathPrefix(`/ws/`)"
+      - "traefik.http.routers.play-ws-ssl.priority=1000"
+      - "traefik.http.routers.play-ws-ssl.entrypoints=websecure"
+      - "traefik.http.routers.play-ws-ssl.tls.certresolver=letsencrypt"
+      - "traefik.http.routers.play-ws-ssl.service=play-ws"
+      - "traefik.http.services.play-ws.loadbalancer.server.port=3001"
+
+  back:
+    image: thecodingmachine/workadventure-back:${VERSION:-master}
+    command: npm run runprod
+    working_dir: /usr/src/back
+    volumes: !reset []
+    ports: !reset []
+    tmpfs: !reset []
+    restart: always
+    environment:
+      PLAY_URL: "https://workadventure.ach.org"
+      MAX_PER_GROUP: "4"
+      GROUP_RADIUS: "48"
+      MAX_USERS_FOR_WEBRTC: "4"
+      LIVEKIT_HOST: "${LIVEKIT_HOST:-http://livekit:7880}"
+      LIVEKIT_API_KEY: "${LIVEKIT_API_KEY:-}"
+      LIVEKIT_API_SECRET: "${LIVEKIT_API_SECRET:-}"
+      EGRESS_HOST: "http://egress:8080"
+      INTERNAL_MAP_STORAGE_URL: ""
+      PUBLIC_MAP_STORAGE_URL: "https://maps.apjan.co"
+
+  map-storage:
+    restart: always
+    volumes:
+      - ./maps-data:/maps
+
+  maps:
+    restart: always
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.middlewares.https-redirect.redirectscheme.scheme=https"
+      - "traefik.http.middlewares.https-redirect.redirectscheme.permanent=true"
+      - "traefik.http.routers.maps-http.rule=Host(`maps.apjan.co`)"
+      - "traefik.http.routers.maps-http.entrypoints=web"
+      - "traefik.http.routers.maps-http.middlewares=https-redirect"
+      - "traefik.http.routers.maps-http.service=maps"
+      - "traefik.http.routers.maps.rule=Host(`maps.apjan.co`)"
+      - "traefik.http.routers.maps.entrypoints=websecure"
+      - "traefik.http.routers.maps.tls.certresolver=letsencrypt"
+
+  redis:
+    image: redis:7-alpine
+    restart: always
+    volumes:
+      - redis-data:/data
+    command: redis-server --appendonly yes
+
+volumes:
+  redis-data:
+  maps-data:
