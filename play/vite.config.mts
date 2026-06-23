@@ -18,9 +18,10 @@ export default defineConfig(({ mode }) => {
         server: {
             host: "0.0.0.0",
             port: 8080,
+            allowedHosts: ["play.apjan.co", "play.workadventure.localhost", "workadventure.ach.org"],
             hmr: {
                 // workaround for development in docker
-                clientPort: 80,
+                clientPort: parseInt(process.env.VITE_HMR_CLIENT_PORT || "80"),
             },
             watch: {
                 ignored: ["./src/pusher"],

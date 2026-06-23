@@ -92,3 +92,31 @@ Note: on some OSes, you will need to add this line to your `/etc/hosts` file:
 ### Troubleshooting
 
 See our [troubleshooting guide](docs/others/troubleshooting.md). 
+
+## Emergency admin commands (self-hosted)
+
+For incidents where an admin needs to remove disruptive users immediately, you can use:
+
+- [contrib/tools/wa-emergency-admin.sh](contrib/tools/wa-emergency-admin.sh)
+
+This script runs inside the existing `play` container and does not require deploying custom endpoints.
+
+Prerequisites:
+
+- Docker Compose stack is running
+- `play` container is healthy (default container name: `workadventure-play-1`)
+- You know the full room URL
+
+List users currently connected to a room:
+
+	./contrib/tools/wa-emergency-admin.sh list --room-id 'https://workadventure.ach.org/_/global/achorg.github.io/ach2026-map/ach2026-map.json'
+
+Kick a specific user by UUID:
+
+	./contrib/tools/wa-emergency-admin.sh kick --room-id 'https://workadventure.ach.org/_/global/achorg.github.io/ach2026-map/ach2026-map.json' --user-uuid 'USER_UUID_HERE'
+
+Optional flags:
+
+- `--message 'Custom reason shown to the user'`
+- `--container workadventure-play-1`
+- `--wait-ms 2000` (list mode only)

@@ -760,6 +760,44 @@ export class SocketManager implements ZoneEventListener {
         return this.rooms;
     }
 
+    public listConnectedUsers(roomId?: string): Array<{
+        roomId: string;
+        userUuid: string;
+        name: string;
+        isLogged: boolean;
+        ipAddress: string;
+        userId?: number;
+    }> {
+        const rooms = roomId
+            ? [this.rooms.get(roomId)].filter((room): room is PusherRoom => room !== undefined)
+            : Array.from(this.rooms.values());
+
+        const users: Array<{
+            roomId: string;
+            userUuid: string;
+            name: string;
+            isLogged: boolean;
+            ipAddress: string;
+            userId?: number;
+        }> = [];
+
+        for (const room of rooms) {
+            for (const socket of room.getConnectedSockets()) {
+                const socketData = socket.getUserData();
+                users.push({
+                    roomId: socketData.roomId,
+                    userUuid: socketData.userUuid,
+                    name: socketData.name,
+                    isLogged: socketData.isLogged,
+                    ipAddress: socketData.ipAddress,
+                    userId: socketData.userId,
+                });
+            }
+        }
+
+        return users;
+    }
+
     public async emitSendUserMessage(userUuid: string, message: string, type: string, roomId: string): Promise<void> {
         /*const client = this.searchClientByUuid(userUuid);
         if(client) {

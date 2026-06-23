@@ -56,6 +56,10 @@ export class PusherRoom {
         return this.positionNotifier.isEmpty();
     }
 
+    public getConnectedSockets(): Socket[] {
+        return Array.from(this.listeners);
+    }
+
     public needsUpdate(versionNumber: number): boolean {
         if (this.versionNumber < versionNumber) {
             this.versionNumber = versionNumber;

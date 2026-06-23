@@ -6,6 +6,7 @@ import Debug from "debug";
 import { apiClientRepository } from "../services/ApiClientRepository";
 import { adminToken } from "../middlewares/AdminToken";
 import { validatePostQuery } from "../services/QueryValidator";
+import { socketManager } from "../services/SocketManager";
 import { BaseHttpController } from "./BaseHttpController";
 
 const debug = Debug("pusher:requests");
@@ -21,6 +22,79 @@ export class AdminController extends BaseHttpController {
         this.getRoomsList();
         this.dispatchGlobalEvent();
         this.dispatchExternalModuleEvent();
+        this.getRoomUsers();
+        this.kickRoomUser();
+    }
+
+    /**
+     * @openapi
+     * /room/users:
+     *   get:
+     *     description: Returns connected users for a room. The request must be authenticated with the admin token.
+     *     tags:
+     *      - Admin endpoint
+     *     parameters:
+     *      - name: "authorization"
+     *        in: "header"
+     *        required: true
+     *        type: "string"
+     *      - name: "roomId"
+     *        in: "query"
+     *        required: true
+     *        type: "string"
+     *        description: The room URL
+     */
+    getRoomUsers(): void {
+        this.app.get("/room/users", [adminToken], (req: Request, res: Response) => {
+            debug(`AdminController => [${req.method}] ${req.originalUrl} — IP: ${req.ip} — Time: ${Date.now()}`);
+
+            if (typeof req.query.roomId !== "string") {
+                res.status(400).send("Missing or invalid roomId query parameter");
+                return;
+            }
+
+            const users = socketManager.listConnectedUsers(req.query.roomId);
+            res.setHeader("Content-Type", "application/json").send(JSON.stringify({ total: users.length, users }));
+            return;
+        });
+    }
+
+    /**
+     * @openapi
+     * /room/kick-user:
+     *   post:
+     *     description: Kicks a user from a room by UUID.
+     *     tags:
+     *      - Admin endpoint
+     */
+    kickRoomUser(): void {
+        this.app.post("/room/kick-user", [adminToken], async (req: Request, res: Response) => {
+            debug(`AdminController => [${req.method}] ${req.originalUrl} — IP: ${req.ip} — Time: ${Date.now()}`);
+
+            const body = validatePostQuery(
+                req,
+                res,
+                z.object({
+                    roomId: z.string(),
+                    userUuid: z.string(),
+                    message: z.string().optional(),
+                })
+            );
+
+            if (body === undefined) {
+                return;
+            }
+
+            await socketManager.emitBan(
+                body.userUuid,
+                body.message ?? "Disconnected by administrator",
+                "banned",
+                body.roomId
+            );
+
+            res.send("ok");
+            return;
+        });
     }
 
     /**
