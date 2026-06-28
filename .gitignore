@@ -26,3 +26,10 @@ synapse/media_store/*
 
 .vscode/settings.json
 play/src/i18n/ko-KR/*.backup
+
+# Deploy runtime data (certs, volumes)
+deploy/workadventure-prod/wa/letsencrypt/
+map-storage/def
+
+# Allow deploy .env template (secrets already replaced with placeholders)
+!deploy/**/.env
